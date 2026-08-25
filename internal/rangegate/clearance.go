@@ -21,14 +21,19 @@ func NewClearanceService(evidence *journal.EvidenceStore, permits *interlock.Per
 }
 
 func (s *ClearanceService) Submit(ctx context.Context, proof model.ClearanceProof, generation model.Identity) (model.Permit, error) {
+	// Persist the signed clearance proof before publishing the permit or lifting the
+	// range hold. A permit is only valid when backed by recoverable evidence: if the
+	// durable write fails (e.g. "no space left on device") we must not release the
+	// T-30 hold or announce range clear, otherwise the countdown resumes with no
+	// recoverable proof and the permit survives the failure into the snapshot.
+	if err := s.evidence.SaveClearance(ctx, proof); err != nil {
+		return model.Permit{}, err
+	}
 	permit := model.Permit{Kind: "range-clear", Revision: proof.Revision, EvidenceID: proof.ID, Generation: generation, IssuedAt: time.Now().UTC()}
 	if err := s.permits.Publish(ctx, permit); err != nil {
 		return model.Permit{}, err
 	}
 	s.holds.Release("range", "range not clear")
-	if err := s.evidence.SaveClearance(ctx, proof); err != nil {
-		return model.Permit{}, err
-	}
 	return permit, nil
 }
 
