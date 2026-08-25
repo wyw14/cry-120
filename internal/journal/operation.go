@@ -66,7 +66,7 @@ func (s *OperationStore) Commit(ctx context.Context, operation model.OperationID
 func (s *OperationStore) Lookup(operation model.OperationID, target any) (bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	payload, err := os.ReadFile(filepath.Join(s.dir, model.NewOperationID().String()+".json"))
+	payload, err := os.ReadFile(filepath.Join(s.dir, operation.String()+".json"))
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
