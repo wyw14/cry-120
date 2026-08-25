@@ -34,6 +34,13 @@ func (m *LeaseManager) Acquire(ctx context.Context, resource string, owner model
 	if err := ctx.Err(); err != nil {
 		return Lease{}, err
 	}
+	// The transfer manifold serves exactly one media path at a time, so the
+	// free-check and the lease write must be a single atomic section. Holding
+	// the fence across the actuator positioning delay guarantees that a racing
+	// second request observes the established lease and gets a retryable
+	// conflict instead of clobbering it and producing a second owner.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	current := m.leases[resource]
 	if current.Active(now) && current.Owner != owner {
 		return Lease{}, model.ErrConflict
