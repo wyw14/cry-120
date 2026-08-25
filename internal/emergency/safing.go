@@ -32,7 +32,9 @@ func NewService(driver ValveDriver, routes *manifold.RouteService, leases *manif
 }
 
 func (s *Service) SafeSession(ctx context.Context, session model.FillSession, now time.Time) error {
-	s.countdown.AllowOperations(true)
+	// Operations are gated by the caller for the duration of safing. Re-enabling
+	// them here would race ahead of the cutoff/drain/route-release steps and
+	// allow a new fill to start before this pad is safe.
 	result := Result{OperationID: model.NewOperationID(), SessionID: session.ID}
 	steps := []struct {
 		name string

@@ -38,8 +38,21 @@ func (s *CancelService) Cancel(ctx context.Context, sessionID model.Identity, no
 	session.Phase = model.FillCancelling
 	session.UpdatedAt = now.UTC()
 	s.sessions.Update(session)
+	// Gate off new operations while safing is in flight. The safing worker
+	// (cutoff, drain, route-release) must finish before the cancel is allowed
+	// to complete externally; otherwise a stale worker from this session can
+	// later close an isolation valve that a freshly-started session reopened.
 	s.gate.AllowOperations(false)
-	go s.safing.SafeSession(context.Background(), session, now)
+	// Run safing synchronously on a detached context so a client disconnect
+	// cannot abort safety-critical closure. SafeSession does not return until
+	// every safing step has exited, which guarantees no stale worker outlives
+	// this call.
+	if err := s.safing.SafeSession(context.Background(), session, now); err != nil {
+		// Safing failed: the worker already published the "pad not safe" hold
+		// and disabled operations. Leave the session in cancelling and keep
+		// operations gated so a new fill cannot start against an unsafe pad.
+		return session, err
+	}
 	event, err := journal.NewEvent("fill.cancelled", session.ID.String(), model.NewRevision(), session, now)
 	if err != nil {
 		return session, err
@@ -50,6 +63,7 @@ func (s *CancelService) Cancel(ctx context.Context, sessionID model.Identity, no
 	session.Phase = model.FillCancelled
 	session.UpdatedAt = time.Now().UTC()
 	s.sessions.Update(session)
+	// All safing actions have exited; it is now safe to let new operations in.
 	s.gate.AllowOperations(true)
 	return session, nil
 }
